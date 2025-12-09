@@ -64,9 +64,9 @@ export async function createEuronStreamingCompletion(options: Omit<EuronCompleti
   }
 
   // Validate key format
-  if (!apiKey.startsWith('sk-')) {
-    throw new Error("Invalid Euron API key format. Key should start with 'sk-'")
-  }
+  // if (!apiKey.startsWith('sk-')) {
+  //   throw new Error("Invalid Euron API key format. Key should start with 'sk-'")
+  // }
 
   const response = await fetch(EURON_API_URL, {
     method: "POST",
