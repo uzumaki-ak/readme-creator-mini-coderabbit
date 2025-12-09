@@ -10,7 +10,6 @@ const _geistMono = Geist_Mono({ subsets: ["latin"] })
 export const metadata: Metadata = {
   title: "ReadmeGen - AI-Powered README Generator",
   description: "Upload your project and let AI generate comprehensive, professional documentation in seconds.",
-    generator: 'v0.app'
 }
 
 export default function RootLayout({
