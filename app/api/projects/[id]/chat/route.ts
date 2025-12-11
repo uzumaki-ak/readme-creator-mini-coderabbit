@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
-import { createEuronStreamingCompletion } from "@/lib/euron"
+import { searchFiles } from "@/lib/search"
+import type { EuronMessage } from "@/lib/euron"
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -32,6 +33,65 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     console.error("Chat fetch error:", error)
     return NextResponse.json({ error: "Failed to fetch messages" }, { status: 500 })
   }
+}
+
+function extractFileName(query: string): string | null {
+  // Look for patterns like "types.ts", "file.ts", etc.
+  const filePattern = /\b(\w+\.\w{1,10})\b/g
+  const matches = query.match(filePattern)
+  return matches ? matches[0] : null
+}
+
+function getLocalAnswer(files: Array<{file_path: string, content: string}>, query: string): string {
+  // First try to extract a specific file name
+  const fileName = extractFileName(query)
+  
+  if (fileName) {
+    // Look for exact file name match
+    const exactMatches = files.filter(f => {
+      const justFileName = f.file_path.split('/').pop()
+      return justFileName?.toLowerCase() === fileName.toLowerCase()
+    })
+    
+    if (exactMatches.length > 0) {
+      let answer = `**📁 Found ${exactMatches.length} file(s) named "${fileName}":**\n\n`
+      exactMatches.forEach(match => {
+        answer += `• **${match.file_path}**\n`
+        const lines = match.content.split('\n').slice(0, 3)
+        if (lines.some(line => line.trim())) {
+          answer += `  \`\`\`\n  ${lines.join('\n  ').substring(0, 100)}...\n  \`\`\`\n`
+        }
+      })
+      return answer
+    }
+  }
+  
+  // If no specific file name, do a general search
+  const searchResults = searchFiles(files, query)
+  
+  if (searchResults.length === 0) {
+    const fileTypes = [...new Set(files.map(f => f.file_path.split('.').pop() || '').filter(Boolean))]
+    return `**No files found matching "${query}"**\n\nTry asking more specifically:\n• "Find all TypeScript files"\n• "Show me configuration files"\n• "List all components"\n\n**Available file types:** ${fileTypes.join(', ')}`
+  }
+  
+  let answer = `**🔍 Search results for "${query}":**\n\n`
+  
+  for (const result of searchResults.slice(0, 5)) {
+    answer += `**📄 ${result.file_path}** (relevance: ${result.relevance})\n`
+    if (result.matches.length > 0) {
+      answer += `*Matches:* ${result.matches.slice(0, 2).join(', ')}\n`
+    }
+    const preview = result.content.split('\n').slice(0, 3).join('\n').substring(0, 150)
+    if (preview.trim()) {
+      answer += `\`\`\`\n${preview}...\n\`\`\`\n\n`
+    }
+  }
+  
+  if (searchResults.length > 5) {
+    answer += `*...and ${searchResults.length - 5} more files*\n`
+  }
+  
+  return answer
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -70,7 +130,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       .select("role, content")
       .eq("project_id", id)
       .order("created_at", { ascending: true })
-      .limit(20)
+      .limit(10)
 
     await supabase.from("chat_messages").insert({
       project_id: id,
@@ -78,220 +138,202 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       content: message,
     })
 
-    // Try Euron API first
-    let useGemini = false
-    let response
+    // First, try to understand what type of question this is
+    const questionLower = message.toLowerCase()
+    const isFileLocationQuestion = 
+      questionLower.includes('where is') ||
+      questionLower.includes('find ') ||
+      questionLower.includes('locate ') ||
+      questionLower.includes('which file') ||
+      questionLower.includes('show me ') ||
+      questionLower.includes('search for')
     
-    try {
-      const fileContext =
-        files
-          ?.slice(0, 15)
-          .map((f) => `--- ${f.file_path} ---\n${f.content?.slice(0, 1500) || ""}`)
-          .join("\n\n") || ""
-
-      const systemPrompt = `You are a helpful AI assistant for a code project called "${project.name}".
-${project.description ? `Project description: ${project.description}` : ""}
-
-You have access to project files and can help with:
-- Explaining code and project structure
-- Answering questions about the codebase
-- Suggesting improvements
-
-IMPORTANT: Keep responses concise. Focus on the specific question.
-If you don't know, say so. Don't make up information.
-
-Project files:
-${fileContext}
-
-${project.generated_readme ? `Current README:\n${project.generated_readme}\n\n` : ""}
-
-Respond in 2-3 paragraphs maximum. Use Markdown for code snippets.`
-
-      const messages_array = [
-        { role: "system" as const, content: systemPrompt },
-        ...(chatHistory?.map((m) => ({
-          role: m.role as "user" | "assistant",
-          content: m.content,
-        })) || []),
-        { role: "user" as const, content: message },
-      ]
-
-      response = await createEuronStreamingCompletion({
-        messages: messages_array,
-        max_tokens: 1500,
-        temperature: 0.7,
-      })
-    } catch (error) {
-      console.log("Euron failed, trying Gemini...")
-      useGemini = true
-    }
-
-    // If Euron failed, try Gemini
-    if (useGemini) {
-      const GEMINI_API_KEY = process.env.GEMINI_API_KEY
+    // If it's a file location question, try local search first
+    if (isFileLocationQuestion && files && files.length > 0) {
+      const localAnswer = getLocalAnswer(files, message)
       
-      if (!GEMINI_API_KEY) {
-        // No Gemini key, return fallback
-        const fallbackResponse = `I'm having trouble accessing the AI service right now. Here's what I can tell you from your project:
-
-**Project Name:** ${project.name}
-**Files:** ${files?.length || 0} files
-**File Types:** ${[...new Set(files?.map(f => f.file_path.split('.').pop() || '') || [])].filter(Boolean).join(', ')}
-
-Try asking specific questions like:
-• "Where is the main component?"
-• "Show me configuration files"
-• "Find files with API endpoints"
-
-You can also try:
-1. Using the README generation feature
-2. Checking the file viewer for code analysis
-3. Try again tomorrow`
-
+      // Check if local answer is useful
+      const hasUsefulResults = !localAnswer.includes('No files found') && 
+                               !localAnswer.includes('Try asking')
+      
+      if (hasUsefulResults) {
         await supabase.from("chat_messages").insert({
           project_id: id,
           role: "assistant",
-          content: fallbackResponse,
+          content: localAnswer,
         })
 
         return NextResponse.json({ 
           success: true,
-          fallback: true,
-          message: fallbackResponse 
+          local: true,
+          message: localAnswer
         })
       }
+      // If local search didn't find anything, continue to AI
+    }
 
+    // Prepare context for AI
+    const fileContext = files
+      ?.slice(0, 8) // Reduced context to save tokens
+      .map((f) => {
+        // Try to extract meaningful info from each file
+        const lines = f.content.split('\n')
+        let usefulContent = ''
+        
+        if (f.file_path.includes('types') || f.file_path.includes('interface') || f.file_path.includes('type')) {
+          // For type files, get type definitions
+          //@ts-ignore
+          const typeLines = lines.filter(line => 
+            line.includes('type ') || 
+            line.includes('interface ') || 
+            line.includes('export ')
+          ).slice(0, 5)
+          usefulContent = typeLines.join('\n')
+        } else if (f.file_path.includes('component') || f.file_path.includes('tsx') || f.file_path.includes('jsx')) {
+          // For components, get component definitions
+          //@ts-ignore
+          const componentLines = lines.filter(line => 
+            line.includes('export default') || 
+            line.includes('function ') || 
+            line.includes('const ') && (line.includes('= () =>') || line.includes('= function'))
+          ).slice(0, 3)
+          usefulContent = componentLines.join('\n')
+        } else {
+          // For other files, just get first few lines
+          usefulContent = lines.slice(0, 3).join('\n')
+        }
+        
+        return `--- ${f.file_path} ---\n${usefulContent.substring(0, 800)}`
+      })
+      .join("\n\n") || ""
+
+    const systemPrompt = `You are an expert developer helping with a project called "${project.name}".
+${project.description ? `Project description: ${project.description}` : ""}
+
+You have access to project files. The user asked: "${message}"
+
+IMPORTANT RULES:
+1. If the user asks about specific files or where something is, FIRST look in the provided file context
+2. Be specific and accurate
+3. If you're not sure, say so
+4. Keep responses concise but helpful
+5. Use Markdown for formatting
+
+Project files context:
+${fileContext}
+
+${project.generated_readme ? `Current README summary:\n${project.generated_readme.substring(0, 500)}\n\n` : ""}
+
+Now answer the user's question:`
+
+    // Build messages array with proper typing
+    const messages_array: EuronMessage[] = [
+      { role: "system", content: systemPrompt },
+    ]
+
+    // Add chat history with proper typing
+    if (chatHistory) {
+      for (const m of chatHistory) {
+        if (m.role === "user" || m.role === "assistant") {
+          messages_array.push({
+            role: m.role,
+            content: m.content
+          } as EuronMessage)
+        }
+      }
+    }
+
+    // Add current message
+    messages_array.push({ role: "user", content: message })
+
+    // Check API keys
+    const hasEuronKey = !!process.env.EURON_API_KEY
+    const hasGeminiKey = !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.startsWith('AIza')
+
+    let aiResponse = null
+
+    // Try Euron first (since it's specifically for this project)
+    if (hasEuronKey) {
       try {
-        // Try Gemini 1.5 Flash (free)
-        const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+        const { createEuronCompletion } = await import("@/lib/euron")
+        
+        const response = await createEuronCompletion({
+          messages: messages_array,
+          max_tokens: 2000,
+          temperature: 0.7,
+          stream: false
+        })
+
+        const data = await response.json()
+        aiResponse = data.choices?.[0]?.message?.content || null
+        
+        if (aiResponse) {
+          console.log("✅ Euron response successful")
+        }
+      } catch (error) {
+        console.log("Euron failed:", error instanceof Error ? error.message : "Unknown error")
+      }
+    }
+
+    // Try Gemini if Euron failed or not configured
+    if (!aiResponse && hasGeminiKey) {
+      try {
+        const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{
-              parts: [{ text: `You are a helpful AI assistant. The user asked: "${message}" about their project "${project.name}". ${project.description ? `Project description: ${project.description}` : ''}. Respond helpfully and concisely.` }]
+              parts: [{ text: systemPrompt }]
             }],
             generationConfig: {
-              maxOutputTokens: 1500,
+              maxOutputTokens: 2000,
               temperature: 0.7,
             }
           })
         })
 
-        if (!geminiResponse.ok) {
-          throw new Error(`Gemini API error: ${geminiResponse.status}`)
+        if (geminiResponse.ok) {
+          const data = await geminiResponse.json()
+          aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text || null
+          console.log("✅ Gemini response successful")
+        } else {
+          console.log("Gemini response not OK:", await geminiResponse.text())
         }
-
-        const data = await geminiResponse.json()
-        const geminiText = data.candidates?.[0]?.content?.parts?.[0]?.text || "I couldn't generate a response."
-
-        await supabase.from("chat_messages").insert({
-          project_id: id,
-          role: "assistant",
-          content: geminiText,
-        })
-
-        return NextResponse.json({ 
-          success: true,
-          gemini: true,
-          message: geminiText 
-        })
-      } catch (geminiError) {
-        console.error("Gemini also failed:", geminiError)
-        
-        // Both APIs failed
-        const fallbackResponse = `I'm having trouble accessing the AI service right now. Both Euron and Gemini APIs are unavailable.
-
-**Project Info:**
-- **Name:** ${project.name}
-- **Files:** ${files?.length || 0}
-- **Description:** ${project.description || "None"}
-
-You can:
-1. Try the README generator
-2. Use file viewer for code analysis
-3. Try again later`
-
-        await supabase.from("chat_messages").insert({
-          project_id: id,
-          role: "assistant",
-          content: fallbackResponse,
-        })
-
-        return NextResponse.json({ 
-          success: true,
-          fallback: true,
-          message: fallbackResponse 
-        })
+      } catch (error) {
+        console.log("Gemini failed:", error instanceof Error ? error.message : "Unknown error")
       }
     }
 
-    // If we got here, Euron succeeded
-    const reader = response!.body?.getReader()
-    if (!reader) {
-      throw new Error("No response body")
+    // If AI didn't respond, provide intelligent fallback
+    if (!aiResponse) {
+      // Try to provide the best possible answer based on available info
+      const fileList = files?.slice(0, 10).map(f => `• ${f.file_path}`).join('\n') || "No files available"
+      const fileCount = files?.length || 0
+      
+      if (isFileLocationQuestion && files && files.length > 0) {
+        // If it was a file location question, provide file list
+        aiResponse = `I can't access AI services right now, but here are the files in your project:\n\n${fileList}\n\n**Total:** ${fileCount} files\n\nTry looking for specific files using the file viewer.`
+      } else {
+        aiResponse = `I'm having trouble accessing AI services. Here's what I know about your project:\n\n**Project:** ${project.name}\n**Files:** ${fileCount}\n\nFor file searches, try asking:\n• "Where is types.ts?"\n• "Find configuration files"\n• "Show me components"`
+      }
     }
 
-    const chunks: string[] = []
-    const decoder = new TextDecoder()
-    let buffer = ""
-
-    const stream = new ReadableStream({
-      async pull(controller) {
-        const { done, value } = await reader.read()
-
-        if (done) {
-          const fullResponse = chunks.join("")
-          await supabase.from("chat_messages").insert({
-            project_id: id,
-            role: "assistant",
-            content: fullResponse,
-          })
-          controller.close()
-          return
-        }
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split("\n")
-        buffer = lines.pop() || ""
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6).trim()
-
-            if (data === "[DONE]") {
-              const fullResponse = chunks.join("")
-              await supabase.from("chat_messages").insert({
-                project_id: id,
-                role: "assistant",
-                content: fullResponse,
-              })
-              controller.close()
-              return
-            }
-
-            try {
-              const parsed = JSON.parse(data)
-              const content = parsed.choices?.[0]?.delta?.content
-              if (content) {
-                chunks.push(content)
-                controller.enqueue(new TextEncoder().encode(content))
-              }
-            } catch {
-              // Skip invalid JSON
-            }
-          }
-        }
-      },
+    await supabase.from("chat_messages").insert({
+      project_id: id,
+      role: "assistant",
+      content: aiResponse,
     })
 
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Transfer-Encoding": "chunked",
-      },
+    return NextResponse.json({ 
+      success: true,
+      message: aiResponse,
+      usedAI: !isFileLocationQuestion || aiResponse.includes('✅') || aiResponse.includes('found')
     })
   } catch (error) {
-    console.error("Chat error:", error)
-    return NextResponse.json({ error: "Failed to process message" }, { status: 500 })
+    console.error("Chat error:", error instanceof Error ? error.message : "Unknown error")
+    return NextResponse.json({ 
+      error: "Failed to process message",
+      fallback: true 
+    }, { status: 500 })
   }
 }

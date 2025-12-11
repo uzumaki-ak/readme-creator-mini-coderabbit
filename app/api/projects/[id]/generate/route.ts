@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
 import { createEuronStreamingCompletion } from "@/lib/euron"
+import { createGeminiCompletion } from "@/lib/gemini"
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -16,7 +17,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
 
     // Get project
-    const { data: project, error: projectError } = await supabase.from("projects").select("*").eq("id", id).single()
+    const { data: project, error: projectError } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("id", id)
+      .single()
 
     if (projectError || !project) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 })
@@ -27,13 +32,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 })
     }
 
-    // Get project files
+    // Get files
     const { data: files } = await supabase
       .from("project_files")
       .select("file_path, content, file_type")
       .eq("project_id", id)
 
-    // Build context for AI
     const fileContext =
       files
         ?.slice(0, 30)
@@ -65,12 +69,53 @@ Generate a README.md that includes:
 6. Installation instructions
 7. Usage examples
 8. Project structure overview
-9. Configuration (if .env files or config files are present)
-10. API documentation (if API routes are present)
-11. Contributing guidelines
+9. Configuration (if .env files are present)
+10. API docs (if API routes exist)
+11. Contributing
 12. License placeholder
 
-Make the README engaging, well-formatted with proper Markdown syntax, and include code blocks where appropriate. Be specific about the actual project rather than generic.`
+Be specific to the project.`
+
+    let useEuron = false
+    let geminiText = ""
+
+    // -------------------------
+    // 1) TRY GEMINI FIRST
+    // -------------------------
+    try {
+      const geminiResult = await createGeminiCompletion(prompt, {
+        maxOutputTokens: 4000,
+        temperature: 0.3,
+      })
+
+      console.log("✅ Gemini success, using Gemini output")
+      geminiText = geminiResult.text
+    } catch (error) {
+      console.error("❌ Gemini failed:", error)
+      useEuron = true
+    }
+
+    // -------------------------
+    // If Gemini succeeded → return plain text response
+    // -------------------------
+    if (!useEuron) {
+      await supabase
+        .from("projects")
+        .update({
+          generated_readme: geminiText,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id)
+
+      return new Response(geminiText, {
+        headers: { "Content-Type": "text/plain" },
+      })
+    }
+
+    // -------------------------
+    // 2) FALLBACK → EURON STREAMING
+    // -------------------------
+    console.log("🔄 Falling back to Euron...")
 
     const response = await createEuronStreamingCompletion({
       messages: [{ role: "user", content: prompt }],
@@ -79,11 +124,8 @@ Make the README engaging, well-formatted with proper Markdown syntax, and includ
     })
 
     const reader = response.body?.getReader()
-    if (!reader) {
-      throw new Error("No response body")
-    }
+    if (!reader) throw new Error("No response body")
 
-    // Parse SSE and collect chunks for saving
     const chunks: string[] = []
     const decoder = new TextDecoder()
     let buffer = ""
@@ -93,12 +135,12 @@ Make the README engaging, well-formatted with proper Markdown syntax, and includ
         const { done, value } = await reader.read()
 
         if (done) {
-          // Save to database when done
           const fullReadme = chunks.join("")
           await supabase
             .from("projects")
             .update({ generated_readme: fullReadme, updated_at: new Date().toISOString() })
             .eq("id", id)
+
           controller.close()
           return
         }
@@ -108,29 +150,29 @@ Make the README engaging, well-formatted with proper Markdown syntax, and includ
         buffer = lines.pop() || ""
 
         for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6).trim()
+          if (!line.startsWith("data: ")) continue
 
-            if (data === "[DONE]") {
-              const fullReadme = chunks.join("")
-              await supabase
-                .from("projects")
-                .update({ generated_readme: fullReadme, updated_at: new Date().toISOString() })
-                .eq("id", id)
-              controller.close()
-              return
-            }
+          const data = line.slice(6).trim()
+          if (data === "[DONE]") {
+            const fullReadme = chunks.join("")
+            await supabase
+              .from("projects")
+              .update({ generated_readme: fullReadme, updated_at: new Date().toISOString() })
+              .eq("id", id)
 
-            try {
-              const parsed = JSON.parse(data)
-              const content = parsed.choices?.[0]?.delta?.content
-              if (content) {
-                chunks.push(content)
-                controller.enqueue(new TextEncoder().encode(content))
-              }
-            } catch {
-              // Skip invalid JSON
+            controller.close()
+            return
+          }
+
+          try {
+            const parsed = JSON.parse(data)
+            const delta = parsed.choices?.[0]?.delta?.content
+            if (delta) {
+              chunks.push(delta)
+              controller.enqueue(new TextEncoder().encode(delta))
             }
+          } catch {
+            // ignore bad json
           }
         }
       },
