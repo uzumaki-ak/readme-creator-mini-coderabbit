@@ -25,37 +25,50 @@ export function ProjectDetailClient({ project: initialProject, files }: ProjectD
 
   const selectedFileContent = files.find((f) => f.file_path === selectedFile)?.content || null
 
-  const handleGenerateReadme = async () => {
-    setIsGenerating(true)
-    try {
-      const response = await fetch(`/api/projects/${project.id}/generate`, {
-        method: "POST",
-      })
+const handleGenerateReadme = async () => {
+  setIsGenerating(true)
+  
+  try {
+    const response = await fetch(`/api/projects/${project.id}/generate`, {
+      method: "POST",
+    })
 
-      if (!response.ok) {
-        throw new Error("Failed to generate README")
-      }
+    if (!response.ok) {
+      throw new Error("Failed to generate README")
+    }
 
-      const reader = response.body?.getReader()
-      const decoder = new TextDecoder()
-      let readme = ""
+    const reader = response.body?.getReader()
+    const decoder = new TextDecoder()
+    let readme = ""
+    let receivedChunks = 0
 
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          readme += decoder.decode(value)
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        
+        receivedChunks++
+        const chunk = decoder.decode(value)
+        readme += chunk
+        
+        // Update progress every 5 chunks
+        if (receivedChunks % 5 === 0) {
           setProject((prev) => ({ ...prev, generated_readme: readme }))
         }
       }
-
-      router.refresh()
-    } catch (error) {
-      console.error("Generation error:", error)
-    } finally {
-      setIsGenerating(false)
     }
+
+    // Final update
+    setProject((prev) => ({ ...prev, generated_readme: readme }))
+    router.refresh()
+    
+  } catch (error) {
+    console.error("Generation error:", error)
+    alert("README generation took too long or failed. A basic README was created. Please edit it manually.")
+  } finally {
+    setIsGenerating(false)
   }
+}
 
   return (
     <main className="mx-auto max-w-7xl px-3 py-4 sm:px-4 sm:py-6">

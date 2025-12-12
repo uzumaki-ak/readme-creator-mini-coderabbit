@@ -4,10 +4,13 @@ export interface Project {
   name: string
   description: string | null
   generated_readme: string | null
-  file_structure: FileNode[] | null
+  file_structure: FileNode[]
   created_at: string
   updated_at: string
+  source?: string  
 }
+
+
 
 export interface ProjectFile {
   id: string
