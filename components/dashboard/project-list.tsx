@@ -1,50 +1,61 @@
-"use client"
+"use client";
 
-import type React from "react"
+import type React from "react";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Trash2, Clock } from "lucide-react"
-import { FileText as FileTextIcon } from "lucide-react"
-import Link from "next/link"
-import type { Project } from "@/lib/types"
-import { createClient } from "@/lib/supabase/client"
-import { useRouter } from "next/navigation"
-import { useState } from "react"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Trash2, Clock } from "lucide-react";
+import { FileText as FileTextIcon } from "lucide-react";
+import Link from "next/link";
+import type { Project } from "@/lib/types";
+import { createClient } from "@/lib/supabase/client";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 interface ProjectListProps {
-  projects: Project[]
+  projects: Project[];
 }
 
 export function ProjectList({ projects }: ProjectListProps) {
-  const router = useRouter()
-  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const router = useRouter();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const handleDelete = async (projectId: string, e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
+    e.preventDefault();
+    e.stopPropagation();
 
-    if (!confirm("Are you sure you want to delete this project?")) return
+    if (!confirm("Are you sure you want to delete this project?")) return;
 
-    setDeletingId(projectId)
-    const supabase = createClient()
+    setDeletingId(projectId);
+    const supabase = createClient();
 
-    const { error } = await supabase.from("projects").delete().eq("id", projectId)
+    const { error } = await supabase
+      .from("projects")
+      .delete()
+      .eq("id", projectId);
 
     if (!error) {
-      router.refresh()
+      router.refresh();
     }
-    setDeletingId(null)
-  }
+    setDeletingId(null);
+  };
 
   if (projects.length === 0) {
     return (
       <div className="text-center py-12">
         <FileTextIcon className="mx-auto h-12 w-12 text-muted-foreground" />
         <h3 className="mt-4 text-lg font-medium">No projects yet</h3>
-        <p className="mt-2 text-muted-foreground">Upload your first project to get started.</p>
+        <p className="mt-2 text-muted-foreground">
+          Upload your first project to get started.
+        </p>
       </div>
-    )
+    );
   }
 
   return (
@@ -54,7 +65,9 @@ export function ProjectList({ projects }: ProjectListProps) {
           <Card className="h-full transition-colors hover:border-primary/50">
             <CardHeader className="pb-3">
               <div className="flex items-start justify-between">
-                <CardTitle className="line-clamp-1 text-lg">{project.name}</CardTitle>
+                <CardTitle className="line-clamp-1 text-lg">
+                  {project.name}
+                </CardTitle>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -66,12 +79,25 @@ export function ProjectList({ projects }: ProjectListProps) {
                   <span className="sr-only">Delete project</span>
                 </Button>
               </div>
-              {project.description && <CardDescription className="line-clamp-2">{project.description}</CardDescription>}
+              {project.description && (
+                <CardDescription className="line-clamp-2">
+                  {project.description}
+                </CardDescription>
+              )}
             </CardHeader>
             <CardContent>
-              <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Clock className="h-3 w-3" />
-                <span>{new Date(project.created_at).toLocaleDateString()}</span>
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <div className="flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
+                  <span>
+                    {new Date(project.created_at).toLocaleDateString()}
+                  </span>
+                </div>
+                {project.source && (
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                    {project.source.includes("GitHub") ? "GitHub" : "ZIP"}
+                  </span>
+                )}
               </div>
               <div className="mt-2">
                 {project.generated_readme ? (
@@ -89,5 +115,5 @@ export function ProjectList({ projects }: ProjectListProps) {
         </Link>
       ))}
     </div>
-  )
+  );
 }
