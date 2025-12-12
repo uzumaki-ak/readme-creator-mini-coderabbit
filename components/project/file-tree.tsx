@@ -14,7 +14,7 @@ interface FileTreeProps {
 
 export function FileTree({ nodes, onFileSelect, selectedPath }: FileTreeProps) {
   return (
-    <div className="text-sm">
+    <div className="text-xs sm:text-sm">
       {nodes.map((node) => (
         <FileTreeNode key={node.path} node={node} onFileSelect={onFileSelect} selectedPath={selectedPath} depth={0} />
       ))}
@@ -47,31 +47,31 @@ function FileTreeNode({ node, onFileSelect, selectedPath, depth }: FileTreeNodeP
       <button
         onClick={handleClick}
         className={cn(
-          "flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors hover:bg-muted",
+          "flex w-full items-center gap-1 rounded px-1 py-0.5 sm:px-2 sm:py-1 text-left transition-colors hover:bg-muted",
           isSelected && "bg-primary/10 text-primary",
         )}
-        style={{ paddingLeft: `${depth * 12 + 8}px` }}
+        style={{ paddingLeft: `${depth * 12 + 6}px` }}
       >
         {isDirectory ? (
           <>
             {isOpen ? (
-              <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <ChevronDown className="h-3 w-3 sm:h-4 sm:w-4 shrink-0 text-muted-foreground" />
             ) : (
-              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <ChevronRight className="h-3 w-3 sm:h-4 sm:w-4 shrink-0 text-muted-foreground" />
             )}
             {isOpen ? (
-              <FolderOpen className="h-4 w-4 shrink-0 text-primary" />
+              <FolderOpen className="h-3 w-3 sm:h-4 sm:w-4 shrink-0 text-primary" />
             ) : (
-              <Folder className="h-4 w-4 shrink-0 text-primary" />
+              <Folder className="h-3 w-3 sm:h-4 sm:w-4 shrink-0 text-primary" />
             )}
           </>
         ) : (
           <>
-            <span className="w-4" />
-            <FileIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="w-3 sm:w-4" />
+            <FileIcon className="h-3 w-3 sm:h-4 sm:w-4 shrink-0 text-muted-foreground" />
           </>
         )}
-        <span className="truncate">{node.name}</span>
+        <span className="truncate text-xs sm:text-sm">{node.name}</span>
       </button>
       {isDirectory && isOpen && node.children && (
         <div>

@@ -60,15 +60,15 @@ export function ReadmeViewer({ content, isGenerating }: ReadmeViewerProps) {
 
   return (
     <Card className="flex h-full flex-col">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+      <CardHeader className="flex flex-col space-y-4 pb-4 sm:flex-row sm:items-center sm:justify-between sm:space-y-0">
         <CardTitle className="text-lg">Generated README</CardTitle>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="flex rounded-md border border-border">
             <Button
               variant={viewMode === "preview" ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setViewMode("preview")}
-              className="rounded-r-none"
+              className="rounded-r-none text-xs sm:text-sm"
             >
               Preview
             </Button>
@@ -76,19 +76,33 @@ export function ReadmeViewer({ content, isGenerating }: ReadmeViewerProps) {
               variant={viewMode === "raw" ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setViewMode("raw")}
-              className="rounded-l-none"
+              className="rounded-l-none text-xs sm:text-sm"
             >
               Raw
             </Button>
           </div>
-          <Button variant="outline" size="sm" onClick={handleCopy}>
-            {copied ? <Check className="mr-1 h-4 w-4" /> : <Copy className="mr-1 h-4 w-4" />}
-            {copied ? "Copied" : "Copy"}
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleDownload}>
-            <Download className="mr-1 h-4 w-4" />
-            Download
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={handleCopy} className="flex-1 sm:flex-none">
+              {copied ? (
+                <>
+                  <Check className="mr-1 h-4 w-4" />
+                  <span className="hidden sm:inline">Copied</span>
+                  <span className="sm:hidden">Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="mr-1 h-4 w-4" />
+                  <span className="hidden sm:inline">Copy</span>
+                  <span className="sm:hidden">Copy</span>
+                </>
+              )}
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleDownload} className="flex-1 sm:flex-none">
+              <Download className="mr-1 h-4 w-4" />
+              <span className="hidden sm:inline">Download</span>
+              <span className="sm:hidden">DL</span>
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="flex-1 overflow-auto">
